@@ -31,52 +31,51 @@ library(kableExtra)
 ```
 
 **(a) Fit the linear model `resist ~ x1 + x2 + x3 + x4`. Extract the $X$ matrix using the `model.matrix` function. How have the levels of the factors been coded?**
-  
+
+Model 1:
+
 ```{r}
 model1 <- lm(resist ~ x1 + x2 + x3 + x4,
              wafer)
 
-msummary(model1,
-         fmt = "%.3e",
-         estimate = "{estimate} (s.e. = {std.error})",
-         statistic = "t = {statistic}, p = {p.value}")
+sumary(model1)
 ```
+
+$X$ Matrix:
 
 ```{r}
 (X <- model.matrix(model1)) %>%
-  kable(booktabs = TRUE) %>%
-  kable_styling()
+  kable()
 ```
 
 \- is coded as 0 and + is coded as 1.
 
 **(b) Compute the correlation between the columns of the $X$ matrix. Why are there some missing values?**
 
+Correlation Matrix:
+
 ```{r}
 cor(X) %>%
-  kable(booktabs = TRUE) %>%
-  kable_styling()
+  kable()
 ```
 
-The standard deviation of the Intercept column is zero, so the correlation coefficient between it and all other columns is not calculable.
+The standard deviation of the Intercept column in $X$ is zero, so the correlation coefficient between it and all other columns is not calculable.
 
 **(c) What difference in resistance is expected when moving from the low to the high level of `x1`?**
 
-From Model 1 in the table above, we can expect an increase of 25.762 when moving from the low to the high level of `x1`.
+From part (a), we can expect an increase of 25.762 when moving from the low to the high level of `x1`.
 
 **(d) Refit the model without `x4` and examine the regression coefficients and standard errors. What stayed the same and what changed? How is this related to the correlation matrix of $X$?**
+
+Model 2:
 
 ```{r}
 model2 <- lm(resist ~ x1 + x2 + x3,
              wafer)
 
-msummary(list(model1, model2),
-         fmt = "%.3e",
-             statistic = c("(s.e. = {std.error},",
-                             "t = {statistic},",
-                             "p = {p.value})"))
+sumary(model2)
 ```
 
-The estimated coefficients for `x1`, `x2`, and `x3` do not change. This is expected because the correlation matrix of $X$ shows zero correlation between each pair of `xi`.
+Comparing to part (a), the estimated coefficients for `x1`, `x2`, and `x3` do not change. This is expected because the correlation matrix of $X$ shows zero correlation between each pair of `xi`.
 
 The standard errors, t-values, and p-values for `xi` change slightly (increasing, magnitude decreasing, and decreasing, respectively). The intercept estimate decreases slightly, and the corresponding standard error decreases, t-value increases in magnitude, and p-value decreases.
