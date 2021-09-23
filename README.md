@@ -1,1 +1,1 @@
-# MethodsOfAppliedStatistics
+# MAS
