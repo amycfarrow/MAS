@@ -1,0 +1,703 @@
+---
+title: "Teenagers' ability to assess credibility in texts"
+author: "Amy Farrow"
+date: "10 January 2022"
+header-includes:
+  \usepackage{booktabs}
+output:
+  bookdown::pdf_document2:
+    latex_engine: xelatex
+    toc: yes
+subtitle: "Modeling Canadian *Programme for International Student Assessment* 2018 data"
+abstract: "This paper uses Programme for International Student Assessment (PISA) 2018 data to analyze Canadian students' ability to assess credibility of media texts. Predictors including demographic traits, subjects taught at school, reading frequency, and access to books and technology were used to created ordinal logistic and binary logistic models. English not being spoken at home, family wealth, and positive affect were associated with lower odds of scoring highly on the meta-cognitive assessing credibility scale. Higher parental occupation, perception of reading confidence, having books, reading long texts, and reading for enjoyment were associated with higher odds of scoring highly."
+thanks: 'Code and data are available at: [github.com/amycfarrow/MAS](https://github.com/amycfarrow/MAS).'
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE)
+
+#### NOTE: to reproduce analysis, run data_cleaning.R before running this .Rmd file.
+#### The data download and cleaning have be separate for knitting pdf speed.
+
+library(tidyverse)
+library(bookdown)    # for cross referencing figures and graphs; referencing
+library(kableExtra)  # for nicer tables
+library(here) # for working in an RProject
+library(stargazer) # for model table
+library(modelsummary) # for displaying summary table of model
+library(cowplot) # for putting plots side by side
+library(MASS) # for ordinal logistic model
+library(AER) # to get p-values for polr models
+library(faraway) # for anova testing
+library(PResiduals) # for residual plots
+library(sure) # for residual plots
+library(ROCR) # for predicting model outcomes
+library(finalfit) # for Predictor variable summary table
+
+# NOTE: to reproduce analysis, run data_cleaning.R before running this .Rmd file.
+```
+\newpage
+
+# Part 1: Overview
+
+## Problem
+
+Today's media landscape is characterized by large amounts of information from a wide range of sources and by increasing concern about misinformation [@Cooke_2018]. One solution to this information overload and misformation is promoting information literacy, which encompasses a wide range of different literacies, including digital literacy, media literacy, and metaliteracy [@Cooke_2018]. With the increasing diversification of sources, one key information literacy skill is assessing credibility [@Metzger_2007]. 
+
+To successfully navigate the contemporary media landscape, today's teenagers must become information literate at the same time as they learn more traditional literacies in school. Their ability to assess credibility of sources, amoungst other skills, is a key tool they can use to protect themselves from misinformation. This paper explores the impact that demographics, education, and reading behaviors have on the ability to assess credibility for 15-year-olds in Canada.
+
+## Data
+
+Every three years, the Organisation for Economic Co-operation and Development (OECD) tests teenagers globally to assess their demographic information as well as performance in reading, mathematics, and science [@FAQPISA]. The goal of the Programme for International Student Assessment (PISA), which has run for seven cycles, is to "assesses the extent to which 15-year-old students near the end of their compulsory education have acquired the knowledge and skills that are essential for full participation in modern societies" [@OECD_2019]. PISA tests students enrolled in educational institutions in grade 7 or higher, who are between the ages of 15 years 3 months and 16 years 2 months [@FAQPISA]. The 2018 PISA had a sample of 710,000 students complete the survey, representing 31 million students in 79 countries around the world [@OECD_2019]. Tests are administered on computers and take about two hours to complete [@FAQPISA]. PISA places great importance on breadth of coverage, representativeness of sample, and validity and reliability of measures [@OECD_2019].
+
+This paper uses the @PISA data, specifically the subset of Canadian students. The dataset includes 19,422 observations, each representing an individual student who completed the survey.
+
+```{r data.import, include=FALSE}
+# import data with correct types
+data <- read.csv(here("Data/cleaned/cleaned_data.csv"), 
+                 colClasses=c("gender" = "factor",
+                              "language" = "factor",
+                              "trust_internet" = "factor",
+                              "detect_bias" = "factor",
+                              "school_read_fic" = "factor",
+                              "school_read_graphs" = "factor",
+                              "school_read_digital" = "factor",
+                              "longest_text" = "factor",
+                              "read_fun" = "factor",
+                              "num_books" = "factor")) %>%
+  dplyr::select(-X, -learning_time) %>%
+  filter(!is.na(assess_credibility)) %>%
+  mutate(assess_credibility = round(
+    (n_distinct(assess_credibility)-1)*(assess_credibility - min(assess_credibility))/
+      (max(assess_credibility) - min(assess_credibility)))) %>%
+  mutate(binary_assess_credibility = ifelse(assess_credibility < 4, 0, 1))
+```
+
+For the first time, the 2018 PISA questionnaire included a scenario to assess student's metacognitive reading processes related to assessing credibility [@PISA2018TechnicalReport]. Students were given a reading task and a set of strategies and were asked to rate the usefulness of the strategies. The strategies were assessed by experts and a hierarchy was created. The students were given a score out of six based on how many times they chose a more useful over a less useful strategy [@PISA2018TechnicalReport]. Figure \@ref(fig:response) shows the distribution of scores received by Canadian PISA survey-takers. There is a polarization in the scores, with the majority of students either scoring 0 out of 6 or 6 out of 6.
+
+```{r response, fig.width=4, fig.height=3.5, out.width="40%", fig.align="center", fig.cap="Response variable distribution"}
+data %>%
+  ggplot(aes(x = assess_credibility)) +
+  geom_bar(fill = "#96939B") +
+  labs(x = "Meta-cognition: assess credibility", y = NULL) +
+  theme_classic()
+```
+
+Figure \@ref(fig:binary-variables) shows the four predictor variables with a binary set of responses. They consist of student gender, language, and information literacy skills being taught at school.
+
+```{r binary-variables, fig.width=6, fig.height=6, fig.align="center", out.width="60%", fig.cap="Binary predictor variable distributions"}
+b1 <- data %>%
+  ggplot(aes(x = gender)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Female", "Male")) +
+  labs(x = "Student gender \n \n", y = NULL) +
+  theme_classic()
+
+b2 <- data %>%
+  ggplot(aes(x = language)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Test language", "Other")) +
+  labs(x = paste(str_wrap("What language do you speak at home most of the time?",
+                          width = 30),"\n"), y = NULL) +
+  theme_classic()
+
+b3 <- data %>%
+  ggplot(aes(x = trust_internet)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Yes", "No")) +
+  labs(x = str_wrap("How to decide whether to trust information from the internet taught at school",
+                    width = 30), y = NULL) +
+  theme_classic()
+
+b4 <- data %>%
+  ggplot(aes(x = detect_bias)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Yes", "No")) +
+  labs(x = str_wrap("How to detect whether information is subjective or biased taught at school",
+                    width = 30), y = NULL) +
+  theme_classic()
+
+plot_grid(b1, b2, b3, b4, ncol = 2)
+```
+Figure \@ref(fig:ordinal-variables) shows the six predictor variables with an ordered set of categorical responses. They include the frequency of school reading activities, the longest texts read in school, reading for pleasure, and books in the home.
+
+Figure \@ref(fig:continous-variables) shows the six predictor variables with numerical values. They include index values to measure the parents' occupational status, the student's access to information and communication technology resources, and the parents' education in years of schooling; a composite scale that measures the student's positive affect; a composite scale that measures the student's perception of their own reading competence; and a measure of family wealth that is assessed based on possessions in the family home.
+
+```{r ordinal-variables, fig.width=8, fig.height=11,, fig.align="center", out.width="75%",  fig.cap="Ordinal predictor variable distributions"}
+d1 <- data %>%
+  ggplot(aes(x = school_read_digital)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Many times", "2 or 3 times", "Once", "Not at all")) +
+  labs(x = str_wrap("During the last month, how often did you have to read digital texts including links for school",
+                    width = 45), y = NULL) +
+  theme_classic()
+
+d2 <- data %>%
+  ggplot(aes(x = school_read_graphs)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Many times", "2 or 3 times", "Once", "Not at all")) +
+  labs(x = str_wrap("During the last month, how often did you have to read texts that include tables or graphs for school",
+                    width = 45), y = NULL) +
+  theme_classic()
+
+d3 <- data %>%
+  ggplot(aes(x = school_read_fic)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("Many times", "2 or 3 times", "Once", "Not at all")) +
+  labs(x = str_wrap("During the last month, how often did you have to read fiction (e.g. novels, short stories) for school", width = 45), y = NULL) +
+  theme_classic()
+
+d4 <- data %>%
+  ggplot(aes(x = longest_text)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("0-1", "2-10", "11-50", "51-100", "101-500", "501+")) +
+  labs(x = str_wrap("The longest piece of text you had to read for lessons in the test language this year (pages)", width = 45), y = NULL) +
+  theme_classic()
+
+d5 <- data %>%
+  ggplot(aes(x = read_fun)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("0", "1-30", "31-59", "60-120", "121+")) +
+  labs(x = paste(str_wrap("How much time do you usually spend reading for enjoyment? (minutes)", width = 45), "\n"), y = NULL) +
+  theme_classic()
+
+d6 <- data %>%
+  ggplot(aes(x = num_books)) +
+  geom_bar(fill = "#564256") +
+  scale_x_discrete(labels = c("0-10", "11-25", "26-100", "101-200", "201-500", "500+")) +
+  labs(x = paste(str_wrap("How many books are there in your home?", width = 45), "\n \n"), y = NULL) +
+  theme_classic()
+
+plot_grid(d1, d2, d3, d4, d5, d6, ncol = 2)
+```
+
+```{r continous-variables, fig.width=8, fig.height=11, fig.align="center", out.width="75%", fig.cap="Interval and ratio predictor distributions"}
+c1 <- data %>%
+  ggplot(aes(x = parent_occup)) +
+  geom_histogram(fill = "#564256", bins = 20) +
+  labs(x = "Index highest occupation status of parents\n", y = NULL) +
+  theme_classic()
+
+c2 <- data %>%
+  ggplot(aes(x = positive_affect)) +
+  geom_histogram(fill = "#564256", bins = 20) +
+  labs(x = "Subjective well-being: Positive affect (WLE)\n", y = NULL) +
+  theme_classic()
+
+c3 <- data %>%
+  ggplot(aes(x = read_competence)) +
+  geom_histogram(fill = "#564256", bins = 20) +
+  labs(x = str_wrap("Self-concept of reading: Perception of competence (WLE)", width = 45), y = NULL) +
+  theme_classic()
+
+c4 <- data %>%
+  ggplot(aes(x = ict_resources)) +
+  geom_histogram(fill = "#564256", bins = 20) +
+  labs(x = "Index ICT: Resources\n", y = NULL) +
+  theme_classic()
+
+c5 <- data %>%
+  ggplot(aes(x = family_wealth)) +
+  geom_histogram(fill = "#564256", bins = 20) +
+  labs(x = "Family wealth PISA 2006\n", y = NULL) +
+  theme_classic()
+
+c6 <- data %>%
+  ggplot(aes(x = parent_ed)) +
+  geom_histogram(fill = "#564256", bins = 20) +
+  labs(x = str_wrap("Index highest parental education in years of schooling", width = 45), y = NULL) +
+  theme_classic()
+
+cowplot::plot_grid(c1, c4, c6, c2, c3, c5, ncol = 2)
+```
+
+More descriptive statistics, including missing values, are available in [Appendix A].
+
+## Results
+
+Three models were used to analyse the relationship between the predictors and assessing credibility scores. The first two both used a model designed for ordered categories, like the assessing credibility score, but were created using different subsets of the data. The third model considered assessing credibility score as a dichotomous outcome: either low or high, splitting the scale in half. All predictors described above were considered for all models.
+
+By looking at the outcome of all models, the predictors that are significant regardless of the model type can be identified. Each significant predictor is associated with an increase or decrease in the odds of a student scoring higher on the assessing credibility scale. Talking about each individual predictor, we are assuming that all other predictors are being kept the same when we talk about an increase or decrease in odds.
+
+Speaking a language other than the test language at home is associated with a 32% decrease. Considering the credibility strategies are assessed in the test language, this result makes sense. Reading texts with graphs once over the past month, when compared with reading them many times, is associated with an 18% decrease. Similarly, never reading texts with graphs is associated with a 19% decrease. We can expect that students who are not asked to read texts with graphs at school on a regular basis will have lower odds of a high assessing credibility score.
+
+Some decreasing results are more surprising. Family wealth increasing by one unit (where each unit is equivalent to one standard deviation in the data distribution) is associated with an 11% decrease. Positive affect increasing by one unit (where each unit is equivalent to one standard deviation in the data distribution) is also associated with an 11% decrease.
+
+Other variables are associated with increases in odds. Parental occupation index increasing by one unit (on a scale of 0 to 100) is associated with a 1% increase.
+
+Many reading-related predictors are associated with increases. A student's self-perception of reading competence increasing one unit (where each unit is equivalent to one standard deviation in the data distribution) is associated with a 23% increase. Having 101-500 books in the home, compared to having 0-10 books, is associated with a 69% increase. Compared to a longest text read for school of 0-1 pages, the longest text being 101-500 pages is associate with an increase of 153%. The text being 501+ pages is associated with a 117% increase. Compared to never reading for fun, reading for 1-30 minutes, 31-59 minutes, 60-120 minutes, and 121+ minutes are associated with increases of 42%, 51%, 49%, and 40%, respectively.
+
+If we want to investigate ways to improve teenagers' ability to assess the credibility of sources, measures associated with traditional literacy should be considered: reading texts with graphs at school, reading longer texts for school, and reading for fun are all related to the assessing credibility score. Family circumstances, while less manipulable, are also worth consideration if only to understand what may give some students an advantage over others when developing critical information literacy: language spoken at home, family wealth, parental occupation, and books in the home are all significant.
+
+It is also important to note that a student's assessing credibility score cannot be predicted with a high degree of accuracy based on the predictors described above. These models are helpful for identifying significant factors, but not for determining an individual student's outcome.
+
+\newpage
+# Part 2: Detailed analysis
+
+## Models
+
+Prior to analysis, an 80/20 train/test split was done. 
+
+```{r train-test-split}
+# perform random train-test split
+set.seed(1818)
+sample_index <- sample(1:nrow(data), 0.8 * nrow(data))
+data_train <- data[sample_index,]
+data_test <- data[-sample_index,]
+```
+
+Because the response variable, assessing credibility score, is an ordered categorical variable, an ordinal logistic model was selected. The ordinal logistic model can be represented as:
+$$
+logit(P(Y \le j)) = \alpha_j-\beta X
+$$
+where $j$ is a specific outcome on the ordinal scale, $X$ is the set of predictors chosen for the model, $\alpha_j$ is the intercept specific to the level in question, and $\beta$ is the model's coefficients.
+
+Backward elimination was used to refine the model. The model with all possible predictors was reviewed for the least significant predictor, and the models with and without that predictor were compared using an ANOVA. If the null hypothesis $H_0: \beta = 0$ was not able to be rejected, then the predictor was removed. This process was repeated until the null hypothesis for tested predictors could be rejected. The model with all predictors and the final model are presented in Table \@ref(tab:modelsummary).
+
+```{r ordinal-logistic-models, echo=FALSE, eval=FALSE}
+# select ordinal logistic models using backward elimination
+mod1 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility,
+               data = data_train,
+               Hess = TRUE)
+summary(mod1)
+
+mod2 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility
+             -trust_internet,
+               data = data_train,
+               Hess = TRUE)
+anova(mod1, mod2)
+summary(mod2)
+
+mod3 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility
+             -trust_internet -parent_ed,
+               data = data_train,
+               Hess = TRUE)
+anova(mod2, mod3)
+summary(mod3)
+
+mod4 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility
+             -trust_internet -parent_ed -school_read_digital,
+               data = data_train,
+               Hess = TRUE)
+anova(mod3, mod4)
+summary(mod4)
+
+mod5 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility
+             -trust_internet -parent_ed -school_read_digital - school_read_fic,
+               data = data_train,
+               Hess = TRUE)
+anova(mod4, mod5)
+```
+
+```{r}
+# compare initial ordinal logistic models and final model
+ord_mod <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility,
+               data = data_train,
+               Hess = TRUE)
+
+ord_mod_final <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility
+                      -trust_internet -parent_ed -school_read_digital,
+               data = data_train,
+               Hess = TRUE)
+
+tidy_custom.polr <- function(x, ...) {
+  s <- coeftest(x)
+  out <- data.frame(
+    term = row.names(s),
+    p.value = s[, "Pr(>|z|)"])
+  out
+}
+```
+
+The model diagnostics (shown in [Appendix B]) demonstrated that the ordinal logistic model was predicting exclusively values of 0 and 6. This was true of all iterations of the ordinal logistic model. This is possibly due to the imbalanced nature of the dataset. The most frequent values of the assessing credibility score are 0 and 6. Two approaches were taken to address this imbalance.
+
+First, the training set was randomly undersampled to create a balanced dataset, where each value of the assessing credibility score was represented at an equal frequency. This reduced the number of observations the model was trained on from 13,736 to 4,940.
+
+```{r}
+# resample data to balance outcomes
+sampled_data <- data_train
+sampled_data$index <- 1:nrow(sampled_data)
+
+# establish how many of each outcome to keep
+min_count <- sampled_data %>%
+  dplyr::select(assess_credibility) %>%
+  table() %>%
+  min()
+
+# create indices for undersampling
+ind_0 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 0) %>%
+  pull(index)
+
+ind_1 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 1) %>%
+  pull(index)
+
+ind_2 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 2) %>%
+  pull(index)
+
+ind_3 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 3) %>%
+  pull(index)
+
+ind_4 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 4) %>%
+  pull(index)
+
+ind_5 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 5) %>%
+  pull(index)
+
+ind_6 <- sampled_data %>%
+  dplyr::filter(assess_credibility == 6) %>%
+  pull(index)
+
+# undersample
+sam_0 <- sample(ind_0, size = min_count, replace = FALSE) 
+sam_1 <- sample(ind_1, size = min_count, replace = FALSE) 
+sam_2 <- sample(ind_2, size = min_count, replace = FALSE) 
+sam_3 <- sample(ind_3, size = min_count, replace = FALSE) 
+sam_4 <- sample(ind_4, size = min_count, replace = FALSE) 
+sam_5 <- sample(ind_5, size = min_count, replace = FALSE) 
+sam_6 <- sample(ind_6, size = min_count, replace = FALSE) 
+
+sample <- c(sam_0, sam_1, sam_2, sam_3, sam_4, sam_5, sam_6)
+
+sampled_data <- sampled_data[which((sampled_data$index %in% sample)==TRUE),] %>%
+  dplyr::select(-index)
+```
+
+The same procedure with ordinal logistic models, p-values, and ANOVA was used to refine a model on this balanced dataset. The model with all predictors and the final model are presented in Table \@ref(tab:modelsummary).
+
+```{r, echo=FALSE, eval=FALSE}
+# select ordinal logistic models using backward elimination
+mod1 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility,
+               data = sampled_data,
+               Hess = TRUE)
+
+modelsummary(mod1, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod2 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed,
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod1, mod2)
+
+modelsummary(mod2, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod3 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet,
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod2, mod3)
+
+modelsummary(mod3, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod4 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet -school_read_fic,
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod3, mod4)
+
+modelsummary(mod4, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod5 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet -school_read_fic -gender, 
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod4, mod5)
+
+modelsummary(mod5, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod6 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet -school_read_fic -gender -ict_resources, 
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod5, mod6)
+
+modelsummary(mod6, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod7 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet -school_read_fic -gender -ict_resources -detect_bias, 
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod6, mod7)
+
+modelsummary(mod7, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod8 <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet -school_read_fic -gender -ict_resources -detect_bias -school_read_digital, 
+               data = sampled_data,
+               Hess = TRUE)
+
+anova(mod7, mod8)
+```
+
+The model diagnostics (shown in [Appendix C]) show that the model trained on the balanced dataset predicted a full range of assessing credibility score values, unlike the model trained on the imbalanced dataset.
+
+```{r}
+# compare initial ordinal logistic models and final model
+balance_ord_mod <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility,
+               data = sampled_data,
+               Hess = TRUE)
+
+balance_ord_mod_final <- polr(as.factor(assess_credibility) ~. -binary_assess_credibility -parent_ed -trust_internet -school_read_fic -gender -ict_resources -detect_bias, 
+               data = sampled_data,
+               Hess = TRUE)
+```
+
+The second approach to the polarized assessing credibility score was converting the score to a binary outcome. Scores below 4 were reassigned to 0, and all other scores were reassigned to 1. With this binary outcome, logistic regression was applicable. The logistic model can be represented as:
+$$
+log\left(\frac{p}{1-p}\right) = \beta X
+$$
+where $p$ is the probabily of the binary outcome being a score of 4 or above, $X$ is the set of predictors chosen for the model, and $\beta$ is the model's coefficients.
+
+The same procedure with p-values and ANOVA was used to refine a logistic model. The model with all predictors and the final model are presented in Table \@ref(tab:modelsummary).
+
+```{r, echo=FALSE, eval=FALSE}
+# select logistic models using backward elimination
+mod1 <- glm(binary_assess_credibility ~ . - assess_credibility,
+               data = data_train,
+               family = "binomial")
+
+modelsummary(mod1, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod2 <- glm(binary_assess_credibility ~ . -assess_credibility -parent_ed,
+               data = data_train,
+               family = "binomial")
+
+anova(mod1, mod2, test = "Chisq")
+
+modelsummary(mod2, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod3 <- glm(binary_assess_credibility ~ . -assess_credibility -parent_ed -school_read_digital,
+               data = data_train,
+               family = "binomial")
+
+anova(mod2, mod3, test = "Chisq")
+
+modelsummary(mod3, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod4 <- glm(binary_assess_credibility ~ . -assess_credibility -parent_ed -school_read_digital -detect_bias,
+               data = data_train,
+               family = "binomial")
+
+anova(mod3, mod4, test = "Chisq")
+
+modelsummary(mod4, stars = TRUE, estimate = "{estimate}[{p.value}]{stars}", statistic = NULL)
+
+mod5 <- glm(binary_assess_credibility ~ . -assess_credibility -parent_ed -school_read_digital -detect_bias -longest_text,
+               data = data_train,
+               family = "binomial")
+
+anova(mod4, mod5, test = "Chisq")
+```
+
+```{r}
+# compare initial logistic models and final model
+log_mod <- glm(binary_assess_credibility ~ . - assess_credibility,
+               data = data_train,
+               family = "binomial")
+
+log_mod_final <- glm(binary_assess_credibility ~ . -assess_credibility -parent_ed -school_read_digital -detect_bias,
+               data = data_train,
+               family = "binomial")
+```
+
+```{r modelsummary}
+# create a table to summarise all models
+modelsummary(list("Ordinal logistic." = ord_mod,
+                  "Ordinal logistic final" = ord_mod_final,
+                  "Ordinal logistic, balanced" = balance_ord_mod,
+                  "Ordinal logistic final, balanced" = balance_ord_mod_final,
+                  "Logistic" = log_mod,
+                  "Logistic final" = log_mod_final),
+             stars = TRUE, output = 'kableExtra',
+             estimate = "{estimate}{stars}", statistic = NULL,
+             caption = "Model comparison",
+             coef_omit = "\\||Intercept") %>%
+  column_spec(column = c(2,3,4,5,6), width = "5em") %>%
+  kable_styling(font_size = 10,
+                latex_options = "striped",
+                stripe_index =c(2,4,6:9,10,12,14:18,23:25,29:31,33),
+                stripe_color = "#E8E8E8")
+```
+
+Both the ordinal logistic model trained on the complete training data and the ordinal logistic model trained on the balanced subsample were used to predict values for the test data, and the RMSE for both was calculated. The model trained on the full training set had an RMSE of 3.386. Despite being trained on fewer values, the model trained on the balanced data performed better with an RMSE of 2.989. While this is an improvement, both RMSE values indicate a poor predictive performance when considering that the range of response is only 6.
+
+The logistic model was assessed using Area Under the Curve (AUC) on the test set, which was 0.668. This is not a strong predictive performance.
+
+```{r, echo=FALSE, include=FALSE}
+# calculate RMSE for ordinal logistic model
+ord_mod_final_rmse <- sqrt(sum((as.numeric(predict(ord_mod_final,
+                                                   newdata = data_test[complete.cases(data_test),])) - data_test[complete.cases(data_test),]$assess_credibility)^2)/nrow(data_test[complete.cases(data_test),]))
+
+balance_ord_mod_final_rmse <- sqrt(sum((as.numeric(predict(balance_ord_mod_final,
+                                                           newdata = data_test[complete.cases(data_test),])) - data_test[complete.cases(data_test),]$assess_credibility)^2)/nrow(data_test[complete.cases(data_test),]))
+
+# calculate AUC for logistic model
+sqrt(sum((as.numeric(ifelse(predict(log_mod_final,
+                                    newdata = data_test[complete.cases(data_test),])<0.5,0,1)) - data_test[complete.cases(data_test),]$binary_assess_credibility)^2)/nrow(data_test[complete.cases(data_test),])) / 1
+
+pred <- prediction(predict(log_mod_final,
+                           newdata=data_test[complete.cases(data_test),],
+                           type = "response"),
+                   data_test[complete.cases(data_test),]$binary_assess_credibility)
+
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+
+auc <- performance(pred, measure = "auc")
+
+log_model_final_auc <- auc@y.values[[1]]
+```
+
+## Analysis and conclusions
+
+While the models are not predictively strong, they are useful for identifying variables that significantly relate to a student's ability to assess credibility in a text.
+
+Some predictors have fairly consistent coefficients across all models. This analysis refers to the numbers in the balanced ordinal logistic model due to its performance on the test set, but only coefficients that are significant and similarly valued across all models are discussed.
+
+First, speaking a language other than the test language at home has a coefficient of -0.387.  To interpret the coefficient, we exponentiate it to get the proportional odds ratio. In this case, the proportional odds ratio is approximately 0.68, indicating that for students who speak a language other than the test language in the home, the odds of scoring higher is 0.68 times that of students who do speak the same language at home, holding all other variables constant, a decrease of 32%. 
+
+Family wealth has an odds ratio of 0.89, indicating that for every one unit increase in the normalized family wealth scale (where 1 = 1 standard deviation), the odds of scoring higher is multiplied by 0.89, a decrease of 11%.
+
+Positive affect has an odds ratio of 0.89, indicating that for every one unit increase in the normalized positive affect scale (where 1 = 1 standard deviation), the odds of scoring higher is multiplied by 0.89, a decrease of 11%.
+
+Reading texts including graphs or tables once over the last month has an odds ratio of 0.82, indicating that for students who read these once, the odds of scoring higher is 0.82 times that of students who read them many times, a decrease of 18%. Similarly, never reading texts has a decrease of 19%.
+
+Parental occupation has an odds ratio of 1.01, indicating that for every one unit increase in the parental occupation scale (0-100), the odds of scoring higher is 1.01 times higher. 
+
+Perception of reading competence has an odds ratio of 1.23, indicating that for every one unit increase in the normalized perception scale (where 1 = 1 standard deviation), the odds of scoring higher is multiplied by 1.23, an increase of 23%.
+
+101-500 books in the home has an odds ratio of 1.69, indicating that for students who have 101-500 books, the odds of scoring higher is 1.69 times that of students who have 0-10 books, a increase of 69%.
+
+Longest text read in the last month being 101-500 pages long has an odds ratio of 2.53, indicating that for students who have read a 101-500 page text, the odds of scoring higher is 2.53 times that of students who only read a text of 0-1 pages, an increase of 153%. Similarly, longest text read in the last month being 501+ pages long has an odds ratio of 2.17, indicating that for students who have read a 500+ page text, the odds of scoring higher is 2.17 times that of students who only read a text of 0-1 pages, an increase of 117%.
+
+Reading 1-30 minutes for fun has an odds ratio of 1.42, indicating that for students who have read 1-30 minutes, the odds of score higher is 1.42 times that of students who never read for pleasure, and increase of 42%. Reading for 31-59 minutes, 60-120 minutes, and 121+ minutes have similar odds ratios, marking increases of 51%, 49%, and 40%, respectively.
+
+Some predictors (gender, access to ICT resources, reading fiction in school) were only significant in the polarized ordinal logistic and logistic models, indicating that they may be useful for distinguishing between the middle of the scale but not for sorting students in high- and low-performing groups. Others, like parental education and being taught how to decide to trust internet information and how to detect bias, did not appear to be significant factors in relation to a student's assessing credibility score.
+
+This analysis indicates that predictors related to reading more (at school or for pleasure) are positively associated with higher assessing credibility scores. Demographic predictors are more mixed in outcome, with parental occupation increasing the proportional odds and family wealth decreasing the proportional odds. 
+
+These results are specific to Canadian 15-year-olds and may not transfer to other contexts, including other countries or other ages of students. Further, the students are tested in a very restricted, artificial environment, and their performance on PISA may not be comparable to their ability (and inclination) to assess the credibility of sources that they encounter in the real world. Assessing practical information literacy would require different measures. Finally, a test for assessing credibility that resulted in a more normally-distributed, granular score would be beneficial to future modeling.
+
+# (APPENDIX) Appendix {-} 
+
+# Appendix A
+
+```{r missingvalues, fig.pos = "!H"}
+data %>%
+  mutate(assess_credibility = as.numeric(assess_credibility)) %>%
+  summary_factorlist("assess_credibility", 
+                     c("gender", "language", "trust_internet", "detect_bias", 
+                       "school_read_digital", "school_read_graphs", "school_read_fic",
+                       "longest_text", "read_fun", "num_books", "parent_occup",
+                       "ict_resources", "parent_ed", "positive_affect",
+                       "read_competence", "family_wealth"),
+                     p = FALSE, 
+                     add_dependent_label = TRUE, 
+                     dependent_label_prefix = "",
+                     add_col_totals = TRUE,
+                     add_row_totals = TRUE,
+                     include_row_missing_col = TRUE,
+                     col_totals_rowname = "",
+                     col_totals_prefix = "N(%) = ") %>%
+  dplyr::select(-unit) %>%
+  knitr::kable(caption = "Predictor variable summary table",
+               booktabs = TRUE, linesep = "",
+               ) %>%
+  kableExtra::kable_styling(latex_options = "HOLD_position",
+                            font_size = 7)
+```
+
+
+# Appendix B
+
+Figure \@ref(fig:ord-model-1-plots) shows diagnostic plots for the first ordinal logistic model.
+
+```{r ord-model-1-plots, fig.width=8, fig.height=3, fig.cap="Diagnostic plots for first ordinal logistic model", fig.pos = "!H"}
+# extract residuals
+sres <- resids(ord_mod_final)
+
+# plot residuals and fitted values
+p1 <- ggplot(data.frame(x = predict(ord_mod_final, 
+                                    newdata = data_train[complete.cases(data_train),]), 
+                        y = sres), 
+             aes(x, y)) +
+  geom_point(color = "#444444", shape = 19, size = 2, alpha = 0.1) +
+  geom_smooth(color = "red", se = FALSE) +
+  labs(x = "Y fitted", y = "Surrogate residual", title = "Residuals vs. Fitted") +
+  theme_classic()
+
+# plot quantiles
+p2 <- ggplot(data.frame(y = sres), 
+             aes(sample = data_train[complete.cases(data_train),]$assess_credibility)) +
+  stat_qq(distribution = qunif, 
+          dparams = list(min = -1, max = 1),
+          alpha = 0.1) +
+  labs(x = "Sample quantile", y = "Theoretical quantile", title = "Q-Q") +
+  theme_classic()
+
+n <- length(sres)
+
+# plot residual pairs
+p3 <- tibble(y = tail(sres, n - 1), x = head(sres, n - 1)) %>%
+  ggplot()+
+  geom_point(aes(x = x, y = y), alpha = 0.1) +
+  geom_vline(xintercept = 0)+ 
+  geom_hline(yintercept = 0)+
+  labs(x = expression(hat(epsilon)[i]), y = expression(hat(epsilon)[i+1]), title = "Residual Pairs") +
+  theme_classic()
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+# Appendix C
+
+Figure \@ref(fig:ord-model-2-plots) shows diagnostic plots for the second ordinal logistic model, trained on a balanced undersampled subset of the training data.
+
+```{r ord-model-2-plots, fig.width=8, fig.height=3, fig.cap="Diagnostic plots for second ordinal logistic model", fig.pos = "!H"}
+# extract residuals
+sres <- resids(balance_ord_mod_final)
+
+# plot residuals and fitted values
+p1 <- ggplot(data.frame(x = predict(balance_ord_mod_final, 
+                                    newdata = sampled_data[complete.cases(sampled_data),]), 
+                        y = sres), aes(x, y)) +
+  geom_point(color = "#444444", shape = 19, size = 2, alpha = 0.1) +
+  geom_smooth(color = "red", se = FALSE) +
+  labs(x = "Y fitted", y = "Surrogate residual", title = "Residuals vs. Fitted") +
+  theme_classic()
+
+# plot quantiles
+p2 <- ggplot(data.frame(y = sres), 
+             aes(sample = sampled_data[complete.cases(sampled_data),]$assess_credibility)) +
+  stat_qq(distribution = qunif, 
+          dparams = list(min = -1, max = 1), 
+          alpha = 0.1) +
+  labs(x = "Sample quantile", y = "Theoretical quantile", title = "Q-Q") +
+  theme_classic()
+
+n <- length(sres)
+
+# plot residual pairs
+p3 <- tibble(y = tail(sres, n - 1), x = head(sres, n - 1)) %>%
+  ggplot()+
+  geom_point(aes(x = x, y = y), alpha = 0.1) +
+  geom_vline(xintercept = 0)+ 
+  geom_hline(yintercept = 0)+
+  labs(x = expression(hat(epsilon)[i]), y = expression(hat(epsilon)[i+1]), title = "Residual Pairs") +
+  theme_classic()
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+
+\newpage
+
+# References
